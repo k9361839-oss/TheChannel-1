@@ -1,17 +1,256 @@
-<!doctype html>
-<html dir="rtl" lang="he">
-
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <title></title>
-  <base href="/">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@200;400;600;700&display=swap" rel="stylesheet">
-  <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>הערוץ הנסיוני</title>
+
+<style>
+body{margin:0;font-family:Segoe UI,Arial;background:#f4f6f9;transition:.3s}
+.dark{background:#121212;color:white}
+header{
+ background:linear-gradient(90deg,#0077ff,#00c6ff);
+ color:white;padding:15px 20px;
+ display:flex;justify-content:space-between;align-items:center
+}
+header h1{margin:0;font-size:26px}
+.top{display:flex;gap:8px;align-items:center}
+button{
+ border:none;padding:6px 12px;border-radius:8px;
+ background:#0077ff;color:white;cursor:pointer
+}
+button:hover{opacity:.85}
+#messages{max-width:900px;margin:20px auto 140px}
+.message{
+ background:white;padding:15px;border-radius:14px;
+ margin-bottom:15px;box-shadow:0 4px 12px rgba(0,0,0,.08)
+}
+.dark .message{background:#1f1f1f}
+.message-header{display:flex;justify-content:space-between;font-weight:bold}
+.role{font-size:12px;padding:2px 6px;border-radius:6px;margin-left:5px}
+.owner{background:#e91e63;color:white}
+.admin{background:#4caf50;color:white}
+.reactions span{margin-left:12px;cursor:pointer}
+.comment-box{margin-top:10px;display:none}
+#newMessage{
+ position:fixed;bottom:0;width:100%;
+ background:white;padding:10px;display:flex;gap:8px;
+ box-shadow:0 -2px 10px rgba(0,0,0,.1)
+}
+.dark #newMessage{background:#1f1f1f}
+input,textarea{
+ padding:8px;border-radius:8px;border:1px solid #ccc
+}
+#scrollBtn{
+ position:fixed;left:20px;bottom:90px
+}
+</style>
 </head>
-
 <body>
-  <app-root></app-root>
-</body>
 
+<header>
+<div class="top">
+<button id="loginBtn">התחברות</button>
+<button onclick="toggleDark()">יום/לילה</button>
+<input type="number" id="jumpInput" placeholder="#מספר" style="width:80px">
+<button onclick="jumpTo()">עבור</button>
+<button id="scrollBtn" onclick="scrollBottom()">רד לסוף</button>
+</div>
+<h1>הערוץ הנסיוני</h1>
+<div id="userBox"></div>
+</header>
+
+<div id="messages"></div>
+
+<div id="newMessage">
+<input type="text" id="msgInput" placeholder="כתוב הודעה 😊" style="flex:1">
+<input type="file" id="fileInput">
+<button onclick="sendMsg()">שלח</button>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js"></script>
+
+<script>
+const firebaseConfig={
+ apiKey:"PUT_YOUR_API_KEY",
+ authDomain:"PUT_YOUR_AUTH_DOMAIN",
+ projectId:"PUT_YOUR_PROJECT_ID",
+ storageBucket:"PUT_YOUR_STORAGE_BUCKET",
+ appId:"PUT_YOUR_APP_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth();
+const db=firebase.firestore();
+const storage=firebase.storage();
+
+let user=null;
+let role="user";
+let counter=0;
+
+document.getElementById("loginBtn").onclick=()=>{
+ const provider=new firebase.auth.GoogleAuthProvider();
+ auth.signInWithPopup(provider);
+};
+
+auth.onAuthStateChanged(async u=>{
+ if(u){
+  user=u;
+  document.getElementById("userBox").innerText=u.displayName;
+  await checkRole();
+  load();
+ }
+});
+
+async function checkRole(){
+ const doc=await db.collection("roles").doc(user.uid).get();
+ if(doc.exists) role=doc.data().role;
+ else{
+  role="owner";
+  db.collection("roles").doc(user.uid).set({role:"owner"});
+ }
+}
+
+function sendMsg(){
+ const text=document.getElementById("msgInput").value;
+ const file=document.getElementById("fileInput").files[0];
+ if(!text && !file) return;
+
+ counter++;
+
+ if(file){
+  const ref=storage.ref().child(Date.now()+"_"+file.name);
+  ref.put(file).then(()=>{
+   ref.getDownloadURL().then(url=>{
+    save(text,url);
+   });
+  });
+ } else save(text,null);
+
+ document.getElementById("msgInput").value="";
+}
+
+function save(text,fileUrl){
+ db.collection("messages").add({
+  text:text,
+  file:fileUrl,
+  user:user.displayName,
+  uid:user.uid,
+  timestamp:Date.now(),
+  number:counter,
+  reactions:{}
+ });
+}
+
+function load(){
+ db.collection("messages").orderBy("timestamp")
+ .onSnapshot(snap=>{
+  document.getElementById("messages").innerHTML="";
+  snap.forEach(doc=>{
+   display(doc.id,doc.data());
+  });
+  scrollBottom();
+ });
+}
+
+function display(id,data){
+ let counts={};
+ Object.values(data.reactions||{}).forEach(e=>{
+  counts[e]=(counts[e]||0)+1;
+ });
+
+ const div=document.createElement("div");
+ div.className="message";
+ div.id="m"+data.number;
+
+ div.innerHTML=`
+ <div class="message-header">
+  <div>
+   ${badge(data.uid)} #${data.number} ${data.user}
+  </div>
+  <div>
+   ${(role==="owner"||role==="admin"||data.uid===user.uid)?
+   `<button onclick="editMsg('${id}','${data.text}')">ערוך</button>
+    <button onclick="delMsg('${id}')">מחק</button>`:""}
+  </div>
+ </div>
+
+ <div>${data.text||""}</div>
+ ${data.file?`<a href="${data.file}" target="_blank">📎 קובץ</a>`:""}
+
+ <div class="reactions">
+  ${reactBtn(id,"👍",counts["👍"]||0)}
+  ${reactBtn(id,"😂",counts["😂"]||0)}
+  ${reactBtn(id,"🔥",counts["🔥"]||0)}
+ </div>
+
+ <button onclick="toggleComments('${id}')">תגובות</button>
+ <div class="comment-box" id="c${id}">
+   <input type="text" placeholder="תגובה 😊"
+   onkeydown="if(event.key==='Enter'){addComment('${id}',this.value);this.value='';}">
+ </div>
+ `;
+
+ document.getElementById("messages").appendChild(div);
+}
+
+function reactBtn(id,e,count){
+ return `<span onclick="react('${id}','${e}')">${e} ${count>0?count:""}</span>`;
+}
+
+function react(id,e){
+ db.collection("messages").doc(id)
+ .update({[`reactions.${user.uid}`]:e});
+}
+
+function addComment(id,text){
+ if(!text) return;
+ db.collection("messages").doc(id)
+ .collection("comments").add({
+  user:user.displayName,
+  text:text,
+  time:Date.now()
+ });
+}
+
+function toggleComments(id){
+ const box=document.getElementById("c"+id);
+ box.style.display=box.style.display==="block"?"none":"block";
+}
+
+function editMsg(id,oldText){
+ const t=prompt("ערוך הודעה:",oldText);
+ if(t) db.collection("messages").doc(id).update({text:t});
+}
+
+function delMsg(id){
+ if(confirm("למחוק הודעה?"))
+ db.collection("messages").doc(id).delete();
+}
+
+function badge(uid){
+ if(role==="owner" && uid===user.uid)
+  return `<span class="role owner">בעלים</span>`;
+ return "";
+}
+
+function toggleDark(){
+ document.body.classList.toggle("dark");
+}
+
+function scrollBottom(){
+ window.scrollTo(0,document.body.scrollHeight);
+}
+
+function jumpTo(){
+ const num=document.getElementById("jumpInput").value;
+ const el=document.getElementById("m"+num);
+ if(el) el.scrollIntoView();
+}
+</script>
+
+</body>
 </html>

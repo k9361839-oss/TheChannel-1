@@ -1,4 +1,4 @@
-# הערוץ
+#אלעדים על המפה
 ![Go](https://img.shields.io/badge/Go-1.22-blue?style=flat-square&logo=go)
 ![Angular](https://img.shields.io/badge/Angular-DD0031?style=flat&logo=angular&logoColor=white)
 ![Caddy](https://img.shields.io/badge/Caddy-00BFB3?style=flat&logo=caddy&logoColor=white)
